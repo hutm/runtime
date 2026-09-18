@@ -3,10 +3,14 @@
 package fc
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"runtime"
 
@@ -29,7 +33,9 @@ import (
 const archARM64 = "arm64"
 
 type apiClient struct {
-	client *client.Firecracker
+	client       *client.Firecracker
+	rawClient    *http.Client
+	cpuConfigURL string
 }
 
 func newApiClient(socketPath string) *apiClient {
@@ -39,7 +45,13 @@ func newApiClient(socketPath string) *apiClient {
 	client.SetTransport(transport)
 
 	return &apiClient{
-		client: client,
+		client:       client,
+		cpuConfigURL: "http://localhost",
+		rawClient: &http.Client{Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
+			},
+		}},
 	}
 }
 
@@ -422,17 +434,38 @@ func (c *apiClient) setCPUConfig(ctx context.Context, path string) error {
 		return fmt.Errorf("read Firecracker CPU config %q: %w", path, err)
 	}
 
-	var cpuConfig models.CPUConfig
+	var cpuConfig json.RawMessage
 	if err := json.Unmarshal(raw, &cpuConfig); err != nil {
 		return fmt.Errorf("parse Firecracker CPU config %q: %w", path, err)
 	}
 
-	params := operations.PutCPUConfigurationParams{
-		Context: ctx,
-		Body:    &cpuConfig,
+	// The bundled generated Firecracker model predates 1.14.4 and serializes
+	// zero-value ARM fields (notably reg_modifiers). Firecracker rejects unknown
+	// fields, so decode only to validate JSON and forward the immutable template
+	// byte-for-byte over the existing Unix-socket transport.
+	url := c.cpuConfigURL
+	if url == "" {
+		url = "http://localhost"
 	}
-	if _, err := c.client.Operations.PutCPUConfiguration(&params); err != nil {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url+"/cpu-config", bytes.NewReader(cpuConfig))
+	if err != nil {
+		return fmt.Errorf("create Firecracker CPU config request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	response, err := c.rawClient.Do(req)
+	if err != nil {
 		return fmt.Errorf("set Firecracker CPU config %q: %w", path, err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		if readErr != nil {
+			return fmt.Errorf("set Firecracker CPU config %q: read HTTP %s response: %w", path, response.Status, readErr)
+		}
+
+		return fmt.Errorf("set Firecracker CPU config %q: HTTP %s: %s", path, response.Status, string(body))
 	}
 
 	return nil
