@@ -130,3 +130,13 @@ func startSetsidCommand(t *testing.T, ctx context.Context, name string, args ...
 
 	return cmd
 }
+
+func TestNewMountNamespaceCommandUsesGoChildLauncher(t *testing.T) {
+	t.Parallel()
+
+	cmd := newMountNamespaceCommand(t.Context(), "true")
+
+	require.Equal(t, []string{"bash", "-c", "true"}, cmd.Args)
+	require.Equal(t, uintptr(syscall.CLONE_NEWNS), cmd.SysProcAttr.Unshareflags)
+	require.True(t, cmd.SysProcAttr.Setsid)
+}

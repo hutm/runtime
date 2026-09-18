@@ -216,14 +216,13 @@ func NewProcess(
 		return nil, fmt.Errorf("error stating kernel file: %w", err)
 	}
 
-	cmd := exec.CommandContext(execCtx,
-		"unshare",
-		"-m",
-		"--",
-		"bash",
-		"-c",
-		startScript.Value,
-	)
+	// Ask the Go child launcher to unshare its mount namespace before exec.
+	// This has the same isolation boundary as `unshare -m -- bash ...`, while
+	// avoiding a dynamically-linked util-linux process on every resume.  The
+	// latter is particularly harmful when the node is under I/O pressure: the
+	// Firecracker/UFFD watchdog cannot make progress until that extra exec
+	// completes.
+	cmd := newMountNamespaceCommand(execCtx, startScript.Value)
 
 	p := &Process{
 		Versions:              versions,
@@ -241,11 +240,21 @@ func NewProcess(
 		rootfsPath: startScript.RootfsPath,
 	}
 
+	return p, nil
+}
+
+// newMountNamespaceCommand returns a child that enters a private mount
+// namespace in the Go fork/exec trampoline, before bash evaluates the
+// Firecracker setup script.  Keeping this as a helper makes the hot-path
+// isolation contract explicit and independently testable.
+func newMountNamespaceCommand(ctx context.Context, script string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "bash", "-c", script)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Create a new session
+		Setsid:       true, // Create a new session
+		Unshareflags: syscall.CLONE_NEWNS,
 	}
 
-	return p, nil
+	return cmd
 }
 
 func (p *Process) configure(
