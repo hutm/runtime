@@ -3,6 +3,7 @@
 package cfg
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -23,14 +24,21 @@ const DefaultBusyboxVersion = "1.36.1"
 type BuilderConfig struct {
 	DomainName             string `env:"DOMAIN_NAME"              envDefault:""`
 	FirecrackerVersionsDir string `env:"FIRECRACKER_VERSIONS_DIR" envDefault:"/fc-versions"`
-	BusyboxVersion         string `env:"BUSYBOX_VERSION"          envDefault:"1.36.1"`
-	HostBusyboxDir         string `env:"HOST_BUSYBOX_DIR"         envDefault:"/fc-busybox"`
-	HostEnvdPath           string `env:"HOST_ENVD_PATH"           envDefault:"/fc-envd/envd"`
-	HostKernelsDir         string `env:"HOST_KERNELS_DIR"         envDefault:"/fc-kernels"`
-	OrchestratorBaseDir    string `env:"ORCHESTRATOR_BASE_PATH"   envDefault:"/orchestrator"`
-	SandboxDir             string `env:"SANDBOX_DIR"              envDefault:"/fc-vm"`
-	SharedChunkCacheDir    string `env:"SHARED_CHUNK_CACHE_PATH"`
-	TemplatesDir           string `env:"TEMPLATES_DIR,expand"     envDefault:"${ORCHESTRATOR_BASE_PATH}/build-templates"`
+	// FirecrackerCPUConfigPath is an optional custom Firecracker CPU template.
+	// It must be present whenever SnapshotCPUProfile is configured so that the
+	// scheduler identity matches the CPU state actually exposed to the guest.
+	FirecrackerCPUConfigPath string `env:"FIRECRACKER_CPU_CONFIG_PATH"`
+	// SnapshotCPUProfile is the cluster-wide virtual CPU profile advertised to
+	// the control plane for snapshots created with FirecrackerCPUConfigPath.
+	SnapshotCPUProfile  string `env:"SNAPSHOT_CPU_PROFILE"`
+	BusyboxVersion      string `env:"BUSYBOX_VERSION"          envDefault:"1.36.1"`
+	HostBusyboxDir      string `env:"HOST_BUSYBOX_DIR"         envDefault:"/fc-busybox"`
+	HostEnvdPath        string `env:"HOST_ENVD_PATH"           envDefault:"/fc-envd/envd"`
+	HostKernelsDir      string `env:"HOST_KERNELS_DIR"         envDefault:"/fc-kernels"`
+	OrchestratorBaseDir string `env:"ORCHESTRATOR_BASE_PATH"   envDefault:"/orchestrator"`
+	SandboxDir          string `env:"SANDBOX_DIR"              envDefault:"/fc-vm"`
+	SharedChunkCacheDir string `env:"SHARED_CHUNK_CACHE_PATH"`
+	TemplatesDir        string `env:"TEMPLATES_DIR,expand"     envDefault:"${ORCHESTRATOR_BASE_PATH}/build-templates"`
 
 	DefaultCacheDir string `env:"DEFAULT_CACHE_DIR,expand" envDefault:"${ORCHESTRATOR_BASE_PATH}/build"`
 
@@ -44,6 +52,7 @@ func makePathsAbsolute(c *BuilderConfig) error {
 	for _, item := range []*string{
 		&c.DefaultCacheDir,
 		&c.FirecrackerVersionsDir,
+		&c.FirecrackerCPUConfigPath,
 		&c.HostBusyboxDir,
 		&c.HostEnvdPath,
 		&c.HostKernelsDir,
@@ -70,6 +79,16 @@ func makePathsAbsolute(c *BuilderConfig) error {
 		}
 
 		*item = dir
+	}
+
+	return nil
+}
+
+func (c BuilderConfig) validateSnapshotCPUProfile() error {
+	profile := strings.TrimSpace(c.SnapshotCPUProfile)
+	template := strings.TrimSpace(c.FirecrackerCPUConfigPath)
+	if (profile == "") != (template == "") {
+		return errors.New("SNAPSHOT_CPU_PROFILE and FIRECRACKER_CPU_CONFIG_PATH must be configured together")
 	}
 
 	return nil
@@ -165,6 +184,9 @@ func Parse() (Config, error) {
 	}
 
 	config.BuilderConfig = bc
+	if err = config.BuilderConfig.validateSnapshotCPUProfile(); err != nil {
+		return config, err
+	}
 
 	if err = config.BuilderConfig.NetworkConfig.Validate(); err != nil {
 		return config, err
@@ -196,6 +218,9 @@ func ParseBuilder() (BuilderConfig, error) {
 	}
 
 	if err = makePathsAbsolute(&model); err != nil {
+		return BuilderConfig{}, err
+	}
+	if err = model.validateSnapshotCPUProfile(); err != nil {
 		return BuilderConfig{}, err
 	}
 

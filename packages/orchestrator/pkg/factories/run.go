@@ -428,7 +428,7 @@ func run(config cfg.Config, opts Options) (success bool) {
 	serviceInstanceID := uuid.NewString()
 
 	// Detect CPU platform for orchestrator pool matching
-	machineInfo, err := machineinfo.Detect()
+	machineInfo, err := machineinfo.Detect(config.SnapshotCPUProfile)
 	if err != nil {
 		log.Printf("failed to detect machine info: %v", err)
 

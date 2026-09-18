@@ -4,6 +4,7 @@
 package cfg
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -70,6 +71,31 @@ func TestParse(t *testing.T) {
 		config, err := Parse()
 		require.NoError(t, err)
 		assert.True(t, config.DisableStartupReclaim)
+	})
+
+	t.Run("snapshot CPU profile requires a Firecracker CPU config", func(t *testing.T) {
+		t.Setenv("SNAPSHOT_CPU_PROFILE", "amd-zenplus-v1")
+
+		_, err := Parse()
+		require.ErrorContains(t, err, "must be configured together")
+	})
+
+	t.Run("Firecracker CPU config requires a snapshot CPU profile", func(t *testing.T) {
+		t.Setenv("FIRECRACKER_CPU_CONFIG_PATH", "/etc/e2b/amd-zenplus-v1.json")
+
+		_, err := Parse()
+		require.ErrorContains(t, err, "must be configured together")
+	})
+
+	t.Run("snapshot CPU profile and Firecracker CPU config parse together", func(t *testing.T) {
+		t.Setenv("SNAPSHOT_CPU_PROFILE", "amd-zenplus-v1")
+		t.Setenv("FIRECRACKER_CPU_CONFIG_PATH", "relative-profile.json")
+
+		config, err := Parse()
+		require.NoError(t, err)
+		assert.Equal(t, "amd-zenplus-v1", config.SnapshotCPUProfile)
+		assert.True(t, filepath.IsAbs(config.FirecrackerCPUConfigPath))
+		assert.Equal(t, "relative-profile.json", filepath.Base(config.FirecrackerCPUConfigPath))
 	})
 }
 

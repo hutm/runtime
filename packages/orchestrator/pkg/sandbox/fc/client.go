@@ -4,8 +4,10 @@ package fc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 
 	"github.com/RoaringBitmap/roaring/v2"
@@ -401,6 +403,36 @@ func (c *apiClient) setMachineConfig(
 	_, err := c.client.Operations.PutMachineConfiguration(&machineConfigParams)
 	if err != nil {
 		return fmt.Errorf("error setting fc machine config: %w", err)
+	}
+
+	return nil
+}
+
+// setCPUConfig applies a custom Firecracker CPU template before boot. The
+// template is deliberately loaded from a node-local immutable path: all nodes
+// that advertise the same snapshot CPU profile must expose the same guest CPU
+// state before a template is built or restored.
+func (c *apiClient) setCPUConfig(ctx context.Context, path string) error {
+	if path == "" {
+		return nil
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read Firecracker CPU config %q: %w", path, err)
+	}
+
+	var cpuConfig models.CPUConfig
+	if err := json.Unmarshal(raw, &cpuConfig); err != nil {
+		return fmt.Errorf("parse Firecracker CPU config %q: %w", path, err)
+	}
+
+	params := operations.PutCPUConfigurationParams{
+		Context: ctx,
+		Body:    &cpuConfig,
+	}
+	if _, err := c.client.Operations.PutCPUConfiguration(&params); err != nil {
+		return fmt.Errorf("set Firecracker CPU config %q: %w", path, err)
 	}
 
 	return nil

@@ -448,6 +448,16 @@ func (p *Process) Create(
 	}
 	telemetry.ReportEvent(ctx, "set fc machine config")
 
+	err = p.client.setCPUConfig(ctx, p.config.FirecrackerCPUConfigPath)
+	if err != nil {
+		fcStopErr := p.Stop(ctx)
+
+		return errors.Join(fmt.Errorf("error setting fc CPU config: %w", err), fcStopErr)
+	}
+	if p.config.FirecrackerCPUConfigPath != "" {
+		telemetry.ReportEvent(ctx, "set fc CPU config")
+	}
+
 	err = p.client.setEntropyDevice(ctx)
 	if err != nil {
 		fcStopErr := p.Stop(ctx)

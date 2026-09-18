@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"strings"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 )
@@ -16,7 +17,19 @@ type MachineInfo struct {
 	Arch      string
 }
 
-func Detect() (MachineInfo, error) {
+// Detect reports either the host CPU or, when configured, the portable guest
+// CPU profile. A snapshot profile is valid only when the same profile's custom
+// Firecracker CPU template is applied before every VM boot.
+func Detect(snapshotCPUProfile string) (MachineInfo, error) {
+	if profile := strings.TrimSpace(snapshotCPUProfile); profile != "" {
+		return MachineInfo{
+			Family:    "snapshot-profile",
+			Model:     profile,
+			ModelName: "Firecracker snapshot CPU profile " + profile,
+			Arch:      runtime.GOARCH,
+		}, nil
+	}
+
 	info, err := cpu.Info()
 	if err != nil {
 		return MachineInfo{}, fmt.Errorf("failed to get CPU info: %w", err)
