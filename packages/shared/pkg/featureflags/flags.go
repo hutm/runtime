@@ -203,8 +203,10 @@ var (
 
 	// UseMemFdFlag asks Firecracker to back guest memory with a memfd and
 	// pass the fd over the UFFD socket; the orchestrator then mmaps it
-	// directly instead of using process_vm_readv on pause.
-	UseMemFdFlag = NewBoolFlag("use-memfd", true)
+	// directly instead of using process_vm_readv on pause. USE_MEMFD lets an
+	// offline cluster select the resume-latency versus pause-throughput tradeoff
+	// without carrying a test-only override or rebuilding the runtime.
+	UseMemFdFlag = NewBoolFlag("use-memfd", envBoolOr("USE_MEMFD", true))
 
 	// UseSyncWPFlag asks Firecracker (via use_sync_wp on snapshot load) to
 	// register guest memory for SYNCHRONOUS userfault write-protect events,
