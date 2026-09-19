@@ -129,6 +129,22 @@ func envBoolOr(key string, fallback bool) bool {
 	return parsed
 }
 
+// envPositiveIntOr allows clusters without LaunchDarkly to tune operational
+// concurrency without rebuilding the runtime. Non-positive and malformed
+// values fall back because either would make a semaphore stop making progress.
+func envPositiveIntOr(key string, fallback int) int {
+	raw := strings.TrimSpace(env.GetEnv(key, ""))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+
+	return parsed
+}
+
 func NewBoolFlag(name string, fallback bool) BoolFlag {
 	flag := BoolFlag{name: name, fallback: fallback}
 	builder := launchDarklyOfflineStore.Flag(flag.name).VariationForAll(fallback)
@@ -443,8 +459,8 @@ func NewIntFlag(name string, fallback int) IntFlag {
 var (
 	MaxSandboxesPerNode = NewIntFlag("max-sandboxes-per-node", 200)
 	// The LD keys keep the legacy "gcloud-" prefix, but the limits apply to uploads on all storage providers.
-	StorageConcurrentUploadLimit  = NewIntFlag("gcloud-concurrent-upload-limit", 8)
-	StorageMaxUploadTasks         = NewIntFlag("gcloud-max-tasks", 16)
+	StorageConcurrentUploadLimit  = NewIntFlag("gcloud-concurrent-upload-limit", envPositiveIntOr("STORAGE_CONCURRENT_UPLOAD_LIMIT", 8))
+	StorageMaxUploadTasks         = NewIntFlag("gcloud-max-tasks", envPositiveIntOr("STORAGE_MAX_UPLOAD_TASKS", 16))
 	ClickhouseBatcherMaxBatchSize = NewIntFlag("clickhouse-batcher-max-batch-size", 1000)
 	ClickhouseBatcherMaxDelay     = NewIntFlag("clickhouse-batcher-max-delay", 1000) // 1s in milliseconds
 	ClickhouseBatcherQueueSize    = NewIntFlag("clickhouse-batcher-queue-size", 1000)

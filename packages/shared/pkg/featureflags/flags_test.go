@@ -74,6 +74,28 @@ func TestDisableLegacyTeamMutationsFlagFallback(t *testing.T) {
 	assert.False(t, client.BoolFlag(t.Context(), DisableLegacyTeamMutationsFlag))
 }
 
+func TestEnvPositiveIntOr(t *testing.T) {
+	const key = "E2B_TEST_POSITIVE_INT"
+
+	for _, tc := range []struct {
+		name     string
+		value    string
+		fallback int
+		want     int
+	}{
+		{name: "unset", fallback: 8, want: 8},
+		{name: "positive", value: " 2 ", fallback: 8, want: 2},
+		{name: "zero", value: "0", fallback: 8, want: 8},
+		{name: "negative", value: "-1", fallback: 8, want: 8},
+		{name: "malformed", value: "many", fallback: 8, want: 8},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(key, tc.value)
+			assert.Equal(t, tc.want, envPositiveIntOr(key, tc.fallback))
+		})
+	}
+}
+
 // Guards the default map shipped in this package: every entry's key must be
 // the LD key its value derives to, or the lookup silently never hits.
 func TestFirecrackerVersionMap_KeysMatchLDKeys(t *testing.T) {
