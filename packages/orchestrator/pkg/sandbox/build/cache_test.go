@@ -312,6 +312,28 @@ func TestDiffStorePinnedSkippedByEviction(t *testing.T) {
 	assert.True(t, store.isBeingDeleted(oldest.CacheKey()))
 }
 
+func TestDiffStorePinsAreReferenceCounted(t *testing.T) {
+	t.Parallel()
+	cachePath := t.TempDir()
+
+	c, err := cfg.Parse()
+	require.NoError(t, err)
+	flags := flagsWithMaxBuildCachePercentage(t, 100)
+	store, err := NewDiffStore(c, flags, cachePath, 60*time.Second, 4*time.Second)
+	require.NoError(t, err)
+
+	diff := newRootFSDiff(t, cachePath, "nested-pin")
+	store.Add(diff)
+	store.Pin(diff.CacheKey())
+	store.Pin(diff.CacheKey())
+
+	store.Unpin(diff.CacheKey())
+	assert.True(t, store.isPinned(diff.CacheKey()), "one owner still holds the pin")
+
+	store.Unpin(diff.CacheKey())
+	assert.False(t, store.isPinned(diff.CacheKey()))
+}
+
 // A Pin that lands after a delete was already scheduled (the Add→Pin window, or
 // a Pin racing the eviction scan) must still protect the entry: the scheduled
 // delete re-checks isPinned when it fires and skips the eviction, so the entry

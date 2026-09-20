@@ -56,10 +56,10 @@ type DiffStore struct {
 	insertionTimes sync.Map // map[DiffStoreKey]time.Time — tracks when each diff was cached
 
 	// pinned entries are skipped by disk-pressure eviction (TTL eviction still
-	// applies). Used to protect a diff whose Close would tear down state another
-	// live entry depends on — e.g. the memfile diff whose DedupedMemfdCache is
-	// also serving an in-flight provisional resume.
-	pinned sync.Map // map[DiffStoreKey]struct{}
+	// applies). Pins are reference counted because one diff can simultaneously
+	// back a provisional resume and an asynchronous upload.
+	pinned   map[DiffStoreKey]uint64
+	pinnedMu sync.RWMutex
 }
 
 func NewDiffStore(
@@ -85,6 +85,7 @@ func NewDiffStore(
 		flags:     flags,
 		pdSizes:   make(map[DiffStoreKey]*deleteDiff),
 		pdDelay:   delay,
+		pinned:    make(map[DiffStoreKey]uint64),
 	}
 
 	cache.OnEviction(func(ctx context.Context, _ ttlcache.EvictionReason, item *ttlcache.Item[DiffStoreKey, Diff]) {
@@ -376,14 +377,33 @@ func (s *DiffStore) isBeingDeleted(key DiffStoreKey) bool {
 }
 
 // Pin protects a cached entry from disk-pressure eviction (TTL eviction still
-// applies). Idempotent; pair every Pin with an Unpin.
-func (s *DiffStore) Pin(key DiffStoreKey) { s.pinned.Store(key, struct{}{}) }
+// applies). Pins are reference counted; pair every Pin with an Unpin.
+func (s *DiffStore) Pin(key DiffStoreKey) {
+	s.pinnedMu.Lock()
+	defer s.pinnedMu.Unlock()
+
+	s.pinned[key]++
+}
 
 // Unpin lifts a Pin, making the entry eligible for disk-pressure eviction again.
-func (s *DiffStore) Unpin(key DiffStoreKey) { s.pinned.Delete(key) }
+func (s *DiffStore) Unpin(key DiffStoreKey) {
+	s.pinnedMu.Lock()
+	defer s.pinnedMu.Unlock()
+
+	count := s.pinned[key]
+	if count <= 1 {
+		delete(s.pinned, key)
+
+		return
+	}
+	s.pinned[key] = count - 1
+}
 
 func (s *DiffStore) isPinned(key DiffStoreKey) bool {
-	_, ok := s.pinned.Load(key)
+	s.pinnedMu.RLock()
+	defer s.pinnedMu.RUnlock()
+
+	_, ok := s.pinned[key]
 
 	return ok
 }

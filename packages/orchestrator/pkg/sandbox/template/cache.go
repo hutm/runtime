@@ -128,6 +128,40 @@ func (c *Cache) Stop() {
 	c.peers.Close()
 }
 
+// PinSnapshotDiffs keeps local snapshot files resident while a background
+// upload consumes them. The returned release function is safe to call more
+// than once.
+func (c *Cache) PinSnapshotDiffs(diffs ...build.Diff) func() {
+	keys := make([]build.DiffStoreKey, 0, len(diffs))
+	seen := make(map[build.DiffStoreKey]struct{}, len(diffs))
+	for _, diff := range diffs {
+		if diff == nil {
+			continue
+		}
+		if _, noDiff := diff.(*build.NoDiff); noDiff {
+			continue
+		}
+
+		key := diff.CacheKey()
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		c.buildStore.Pin(key)
+		keys = append(keys, key)
+	}
+
+	var once sync.Once
+
+	return func() {
+		once.Do(func() {
+			for _, key := range keys {
+				c.buildStore.Unpin(key)
+			}
+		})
+	}
+}
+
 func (c *Cache) Items() map[string]*ttlcache.Item[string, Template] {
 	return c.cache.Items()
 }

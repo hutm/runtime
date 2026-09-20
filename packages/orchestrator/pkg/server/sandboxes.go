@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"maps"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -1529,6 +1530,11 @@ func (s *Server) snapshotAndCacheSandbox(
 		return nil, fmt.Errorf("error adding snapshot to template cache: %w", err)
 	}
 
+	// Uploads run after the request returns and may queue behind the storage
+	// concurrency limiter. Keep their local source files out of disk-pressure
+	// eviction until the upload reaches a terminal state.
+	releaseUploadSources := s.templateCache.PinSnapshotDiffs(snapshot.MemorySnapshot.Diff, snapshot.RootfsDiff)
+
 	// Caller-supplied provenance (e.g. template_id) is forwarded as-is; team and
 	// origin are orchestrator-authoritative and set last so they always win.
 	objectMetadata := storage.ObjectMetadata{}
@@ -1540,6 +1546,8 @@ func (s *Server) snapshotAndCacheSandbox(
 	// failed AddSnapshot doesn't leave an orphan future blocking re-registration.
 	upload, err := sandbox.NewUpload(ctx, s.uploads, snapshot, s.persistence, s.config.StorageConfig.CompressConfig, s.featureFlags, storage.UseCasePause, objectMetadata)
 	if err != nil {
+		releaseUploadSources()
+
 		return nil, fmt.Errorf("register upload: %w", err)
 	}
 
@@ -1549,23 +1557,27 @@ func (s *Server) snapshotAndCacheSandbox(
 	// completeUpload don't drift if the flag flips mid-upload.
 	peerEnabled := s.featureFlags.BoolFlag(ctx, featureflags.PeerToPeerChunkTransferFlag)
 
+	var completeOnce sync.Once
 	completeUpload := func(ctx context.Context, uploadErr error) {
-		upload.Finish(ctx, uploadErr)
+		completeOnce.Do(func() {
+			defer releaseUploadSources()
+			upload.Finish(ctx, uploadErr)
 
-		if !peerEnabled {
-			return
-		}
+			if !peerEnabled {
+				return
+			}
 
-		// Only advertise the build as fully uploaded when it actually landed.
-		// On abandon/failure the bytes are not in storage, so marking it would
-		// make chunk-serving falsely report "already uploaded".
-		if uploadErr == nil {
-			s.uploadedBuilds.Set(meta.Template.BuildID, struct{}{}, ttlcache.DefaultTTL)
-		}
+			// Only advertise the build as fully uploaded when it actually landed.
+			// On abandon/failure the bytes are not in storage, so marking it would
+			// make chunk-serving falsely report "already uploaded".
+			if uploadErr == nil {
+				s.uploadedBuilds.Set(meta.Template.BuildID, struct{}{}, ttlcache.DefaultTTL)
+			}
 
-		if err := s.peerRegistry.Unregister(ctx, meta.Template.BuildID); err != nil {
-			logger.L().Warn(ctx, "failed to unregister peer address from routing", zap.String("build_id", meta.Template.BuildID), zap.Error(err))
-		}
+			if err := s.peerRegistry.Unregister(ctx, meta.Template.BuildID); err != nil {
+				logger.L().Warn(ctx, "failed to unregister peer address from routing", zap.String("build_id", meta.Template.BuildID), zap.Error(err))
+			}
+		})
 	}
 
 	if peerEnabled {
