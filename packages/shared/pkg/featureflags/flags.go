@@ -568,7 +568,10 @@ var (
 	//                resume-critical path.
 	//   "off"      — kill switch, no resume prefetch.
 	// Unknown values fall back to "init".
-	ResumePrefetchSourceFlag = NewStringFlag("resume-prefetch-source", "init")
+	ResumePrefetchSourceFlag = NewStringFlag(
+		"resume-prefetch-source",
+		env.GetEnv("RESUME_PREFETCH_SOURCE", "init"),
+	)
 
 	// ResumeLastCyclePrefetchMaxMiBFlag caps how much of the last-cycle diff a single
 	// resume prefetches, in MiB. -1 (the default, negative = no limit per the
